@@ -52,14 +52,23 @@ location. macOS can treat File Provider access as a permission separate from
 Full Disk Access. If it does, reads fail with `Operation not permitted`, and
 `/health` reports that mount as `readable: false`.
 
-Two other File Provider behaviors are handled in the server:
+Three other File Provider behaviors are handled in the server:
 
-- **Online-only placeholders.** Reading a file whose bytes are not on disk
-  makes the sync client download it, and the read blocks until it does. Every
-  filesystem call runs in a worker thread under a 20-second timeout, so a slow
-  download returns an error saying to try again rather than hanging the
-  request. Keep mounted folders available offline in the sync client so this
-  is rare.
+- **launchd forbids downloading placeholders.** A file that is online-only is
+  "dataless": `ls -lO` shows the `dataless` flag, and it has a size but no
+  bytes on disk. Reading it normally makes the sync client download it, but
+  launchd starts its jobs with that download switched off (the
+  `IOPOL_TYPE_VFS_MATERIALIZE_DATALESS_FILES` I/O policy), so under a
+  LaunchAgent every such read fails immediately with `Resource deadlock
+  avoided` (EDEADLK). Listing still works, and the same read from a terminal
+  or over SSH succeeds, which makes this look like a permissions problem. It
+  is not one. The server switches the policy on at startup with
+  `setiopolicy_np`.
+- **Slow downloads.** With downloads allowed, a read blocks until the file
+  arrives. Every filesystem call runs in a worker thread under a 20-second
+  timeout, so a slow download returns an error saying to try again rather
+  than hanging the request. Keeping mounted folders available offline in the
+  sync client makes this rare.
 - **Decomposed filenames.** Names can be stored in NFD. The server compares
   and returns names in NFC.
 

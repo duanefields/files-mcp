@@ -11,9 +11,11 @@ Nothing here returns a host path. Entries carry mount-relative paths.
 
 from __future__ import annotations
 
+import ctypes
 import hashlib
 import os
 import stat
+import sys
 from datetime import datetime
 from pathlib import Path
 
@@ -32,6 +34,34 @@ class FileError(Exception):
 def version_of(data: bytes) -> str:
     """The content version: the first 16 hex characters of the SHA-256."""
     return hashlib.sha256(data).hexdigest()[:16]
+
+
+def allow_dataless_downloads() -> bool:
+    """Let this process download cloud placeholders when it reads them. macOS only.
+
+    A file in a File Provider folder (Dropbox, iCloud Drive) can be "dataless":
+    listed, with a size, but with no bytes on disk until something reads it.
+    launchd starts its jobs with the policy that allows that download switched
+    off, so under a LaunchAgent every such read fails at once with EDEADLK
+    ("Resource deadlock avoided"), while the same read from a terminal works.
+    Measured on the host: policy 1 (off) by default, and reads succeed once it
+    is set to 2 (on).
+
+    Returns whether the policy is now on. Elsewhere there is nothing to do.
+    """
+    if sys.platform != "darwin":
+        return False
+    # From <sys/resource.h>.
+    iopol_type_vfs_materialize_dataless_files = 3
+    iopol_scope_process = 0
+    iopol_materialize_dataless_files_on = 2
+    libc = ctypes.CDLL(None, use_errno=True)
+    result = libc.setiopolicy_np(
+        iopol_type_vfs_materialize_dataless_files,
+        iopol_scope_process,
+        iopol_materialize_dataless_files_on,
+    )
+    return result == 0
 
 
 def _timestamp(seconds: float) -> str:

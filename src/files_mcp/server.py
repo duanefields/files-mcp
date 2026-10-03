@@ -371,6 +371,14 @@ def main():
         logger.error("%s", exc)
         sys.exit(1)
 
+    # Without this, a LaunchAgent cannot read an online-only file in a
+    # cloud-synced mount at all. See fs.allow_dataless_downloads.
+    if sys.platform == "darwin" and not fs.allow_dataless_downloads():
+        logger.warning(
+            "Could not allow downloads of cloud placeholders; reading an online-only "
+            "file in a cloud-synced mount will fail with 'Resource deadlock avoided'."
+        )
+
     # Read transport settings here rather than at import time so that a service
     # manager and the tests can set the environment before calling main().
     transport = os.environ.get("FILES_MCP_TRANSPORT", "stdio")

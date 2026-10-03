@@ -5,11 +5,12 @@ observed deciding what to do.
 """
 
 import json
+import sys
 from unittest.mock import MagicMock, patch
 
 import pytest
 
-from files_mcp import server
+from files_mcp import fs, server
 from tests.conftest import write_config
 
 
@@ -143,3 +144,40 @@ async def test_health_is_cached(config, monkeypatch):
 
     roots = {m.root for m in config.mounts.values()}
     assert len([c for c in calls if c in roots]) == 2  # once per mount
+
+
+def test_startup_allows_cloud_placeholder_downloads(config_env, monkeypatch):
+    """Under launchd the policy starts off, and every online-only read fails."""
+    monkeypatch.setattr(server.sys, "platform", "darwin")
+    allow = MagicMock(return_value=True)
+    monkeypatch.setattr(server.fs, "allow_dataless_downloads", allow)
+
+    with patch.object(server.mcp, "run"):
+        server.main()
+
+    allow.assert_called_once_with()
+
+
+def test_a_failed_policy_change_warns(config_env, monkeypatch, caplog):
+    monkeypatch.setattr(server.sys, "platform", "darwin")
+    monkeypatch.setattr(server.fs, "allow_dataless_downloads", lambda: False)
+
+    with patch.object(server.mcp, "run"):
+        server.main()
+
+    assert "Resource deadlock avoided" in caplog.text
+
+
+@pytest.mark.skipif(sys.platform != "darwin", reason="setiopolicy_np is macOS only")
+def test_dataless_policy_is_really_set():
+    import ctypes
+
+    assert fs.allow_dataless_downloads() is True
+    libc = ctypes.CDLL(None)
+    assert libc.getiopolicy_np(3, 0) == 2  # materialize dataless files: on
+
+
+def test_dataless_policy_is_a_no_op_off_macos(monkeypatch):
+    monkeypatch.setattr(fs.sys, "platform", "linux")
+
+    assert fs.allow_dataless_downloads() is False

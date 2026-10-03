@@ -120,6 +120,11 @@ mount names; host paths never appear in a tool result, an error, or `/health`.
   for the download. Every filesystem call goes through `server._blocking`,
   with a `FS_TIMEOUT_SECONDS` timeout, so a request returns an error rather than
   hanging. Do not add a filesystem call outside it.
+- **launchd forbids downloading placeholders.** A LaunchAgent starts with the
+  dataless-file I/O policy off, so reading an online-only file fails at once
+  with EDEADLK ("Resource deadlock avoided") even though a terminal can read
+  it. `main()` calls `fs.allow_dataless_downloads()` to switch it on. Do not
+  remove it; without it the server cannot read most of a Dropbox mount.
 - **Privacy grants.** A LaunchAgent cannot answer a prompt. Full Disk Access is
   bound to the resolved interpreter path, which a uv Python upgrade moves.
   `/health` reports it; see `docs/deployment-macos.md`.
