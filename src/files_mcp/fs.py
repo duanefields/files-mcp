@@ -276,16 +276,17 @@ def match_segments(pattern: list[str], parts: list[str]) -> bool:
     )
 
 
-def glob_files(base: Resolved | None, rest: list[str]) -> list[dict]:
+def glob_files(base: Resolved, rest: list[str]) -> list[dict]:
     """Files under ``base`` whose path below it matches ``rest``, in path order.
 
-    ``base`` is the pattern's literal prefix, already resolved; None means it
-    does not exist (or is excluded, which must look the same), so nothing
-    matches. With no wildcard segments at all, ``rest`` is empty and the
-    pattern names one file.
+    ``base`` is the pattern's literal prefix, already resolved. If it does not
+    exist, that is the same not-found error every other tool gives -- so a
+    mistyped folder is reported, and an excluded one reads exactly the same.
+    With no wildcard segments at all, ``rest`` is empty and the pattern names
+    one file.
     """
-    if base is None or not base.real.exists():
-        return []
+    if not base.real.exists():
+        raise _missing(base.display)
     if not rest:
         if base.real.is_file():
             info = base.real.stat()

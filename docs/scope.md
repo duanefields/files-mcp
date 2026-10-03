@@ -86,6 +86,10 @@ Choices the spec left open:
 
 - `glob` returns files only, matches case-sensitively, and supports `**` for
   any number of folders. The first segment must be a literal mount name.
+  If the part before the first wildcard does not exist, the reply is the
+  standard not-found error (identical for an excluded folder), so a mistyped
+  folder is not mistaken for an empty result. Changed after the first
+  connector test, where a model pointed out the ambiguity.
 - `search_text`'s `glob` filter with one segment (`*.md`) matches the file
   name at any depth; with a `/` it matches the path below the searched
   folder. Lines longer than 500 characters are cut. Default `limit` is 100.

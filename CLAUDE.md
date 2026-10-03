@@ -118,9 +118,11 @@ all read-only: `list_mounts`, `list_directory`, `read_files`, `glob`,
   normalize (Linux CI), `_locate` falls back to an NFC scan of the parent.
 - No case handling of our own; APFS is case-insensitive already. Glob
   patterns match case-sensitively against names as stored.
-- `glob` resolves the pattern's literal prefix with `resolve()`. A missing or
-  excluded prefix (`paths.NotFound`) is zero matches, not an error, so the
-  two stay indistinguishable; an escaping prefix is still an error.
+- `glob` resolves the pattern's literal prefix (everything before the first
+  wildcard) with `resolve()`. A missing prefix is the standard not-found
+  error, so a typo is not mistaken for an empty result, and an excluded
+  prefix gets the identical error. Only an existing prefix with nothing
+  matching past the wildcard says "No files match".
 
 ## Things that bite on macOS
 

@@ -26,7 +26,7 @@ from starlette.responses import JSONResponse
 from . import fs
 from .config import Config, ConfigError, load_config
 from .fs import FileError
-from .paths import NotFound, PathError, nfc, resolve, split
+from .paths import PathError, nfc, resolve, split
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -287,7 +287,9 @@ async def glob(
 ) -> ToolResult:
     """Find files whose paths match a pattern.
 
-    The pattern starts with a mount name and uses * (any characters within one
+    If the part of the pattern before the first wildcard does not exist, the
+    reply is a not-found error rather than an empty result, so check the
+    folder name. The pattern starts with a mount name and uses * (any characters within one
     folder name), ? (one character), [abc] (one of a set), and ** (any number
     of folders, including none). Matching is case-sensitive. Only files are
     returned, sorted by path and paginated: when the reply starts with
@@ -313,11 +315,7 @@ async def glob(
         first = next((i for i, seg in enumerate(segments) if fs.has_wildcard(seg)), None)
         literal = segments if first is None else segments[:first]
         rest = [] if first is None else segments[first:]
-        try:
-            base = resolve(_cfg(), "/".join([mount, *literal]))
-        except NotFound:
-            # A missing prefix and an excluded one both just match nothing.
-            base = None
+        base = resolve(_cfg(), "/".join([mount, *literal]))
         found = await _blocking(fs.glob_files, base, rest, what=f"Matching {pattern}")
     except (PathError, FileError) as exc:
         return _error_result(str(exc))

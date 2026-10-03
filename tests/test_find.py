@@ -70,16 +70,38 @@ async def test_glob_skips_excluded_and_escaping_entries(config):
 
 async def test_glob_without_wildcards_names_one_file(config):
     assert paths_of(await server.glob(pattern="council/council.md")) == ["council/council.md"]
-    assert paths_of(await server.glob(pattern="council/missing.md")) == []
+
+
+async def test_a_missing_prefix_is_reported_not_just_empty(config):
+    """A mistyped folder must not look like a search that found nothing."""
+    result = await server.glob(pattern="council/advisers/*/persona.md")
+
+    assert result.structured_content["error"] == (
+        "council/advisers was not found. Use list_directory on its folder to see what's there."
+    )
+
+
+async def test_a_missing_file_without_wildcards_is_not_found(config):
+    result = await server.glob(pattern="council/missing.md")
+
+    assert "council/missing.md was not found" in result.structured_content["error"]
 
 
 async def test_excluded_prefix_looks_exactly_like_a_missing_one(config):
     excluded = await server.glob(pattern="council/.git/*")
     missing = await server.glob(pattern="council/nowhere/*")
 
-    assert text_of(excluded) == "No files match council/.git/*."
-    assert text_of(missing) == "No files match council/nowhere/*."
-    assert excluded.structured_content["total"] == missing.structured_content["total"] == 0
+    assert excluded.structured_content["error"] == missing.structured_content["error"].replace(
+        "nowhere", ".git"
+    )
+    assert "exclude" not in excluded.structured_content["error"]
+
+
+async def test_an_existing_prefix_with_no_matches_is_empty(config):
+    result = await server.glob(pattern="council/advisors/*/missing-*.md")
+
+    assert text_of(result) == "No files match council/advisors/*/missing-*.md."
+    assert result.structured_content["total"] == 0
 
 
 async def test_glob_matching_is_case_sensitive(config):
