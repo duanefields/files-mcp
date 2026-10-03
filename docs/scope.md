@@ -121,3 +121,13 @@ Choices the spec left open:
 - Neither `move_file` nor `delete_file` acts on a symlink itself, or on a
   mount's top folder.
 - Write tools run one at a time inside the server.
+
+Deployed to the host Mac 2026-10-03, with the council mount switched to
+`rw`. Checked over the public URL with the full OAuth login, in a throwaway
+folder that was removed afterward: create, refused overwrite without a
+version, refused edit with a stale version, edit with the current version,
+append (newline added), read back, move into a new subfolder, refused delete
+of a non-empty folder, file and folder deletes, and a refused write into
+`.git` (not found). Each call took 80–120 ms; the first, about 300 ms. The
+audit log recorded all eleven write-tool calls with the OAuth client ID and
+no contents.
