@@ -1,0 +1,65 @@
+[project]
+name = "files-mcp"
+version = "0.1.0"
+description = "File access to a few configured folders on one machine, as an MCP server"
+readme = "README.md"
+requires-python = ">=3.12"
+license = "MIT"
+keywords = ["files", "filesystem", "mcp", "model-context-protocol"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: System :: Filesystems",
+]
+dependencies = [
+    "fastmcp>=3.0.0,<4",
+    "pyyaml>=6.0",
+]
+
+[project.optional-dependencies]
+test = [
+    "pytest>=8.0.0",
+    "pytest-asyncio>=0.24.0",
+    "pytest-mock>=3.14.0",
+]
+
+[project.scripts]
+files-mcp = "files_mcp.server:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/files_mcp"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+python_classes = ["Test*"]
+python_functions = ["test_*"]
+asyncio_mode = "auto"
+
+[tool.ruff]
+target-version = "py312"
+line-length = 100
+
+[tool.ruff.lint]
+# Deliberately narrow: rules that catch bugs, not rules that have opinions.
+#
+# E9 is syntax and IO errors, F is pyflakes -- undefined names, unused imports,
+# f-strings with no placeholders -- and B is bugbear's real footguns (mutable
+# default arguments, `except` ordering, loop variables captured by closures).
+#
+# Style rules are left off on purpose. Enabling them would mean reformatting
+# files that have nothing to do with the change in front of you, and a linter
+# that reports 24 things nobody intends to fix is a linter people stop reading.
+select = ["E9", "F", "B"]
+
+[tool.ruff.lint.per-file-ignores]
+# Setting FastMCP's env vars has to happen before the import that reads them.
+"src/files_mcp/__init__.py" = ["E402"]

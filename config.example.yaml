@@ -1,0 +1,19 @@
+# Copy to ~/.files-mcp/config.yaml (or point FILES_MCP_CONFIG at it) and edit.
+# Read once at startup; restart the server to pick up changes.
+#
+# This file is the whole security boundary. Clients see only mount names and
+# paths inside mounts; nothing else on the machine is reachable.
+
+mounts:
+  - name: notes                      # clients see paths as notes/...
+    path: ~/Documents/notes          # the real folder on this machine; ~ is expanded
+    mode: ro                         # ro (read-only) or rw (read-write)
+    exclude: [".git"]                # glob patterns, matched against every path segment
+
+# Applies to every mount, merged with each mount's own list.
+exclude: [".DS_Store"]
+
+limits:
+  max_read_bytes: 1048576            # per file; larger files need head or tail
+  max_files_per_read: 25
+  max_write_bytes: 1048576
