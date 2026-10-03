@@ -9,7 +9,10 @@
 #
 #   HEALTH_URL=http://127.0.0.1:18794/health
 #   PING_URL=https://hc-ping.com/your-uuid-here
-#   EXPECTED_PYTHON=~/.local/share/uv/python/cpython-3.12.12-macos-aarch64-none/bin/python3.12
+#   EXPECTED_PYTHON='~/.local/share/uv/python/cpython-3.12.12-macos-aarch64-none/bin/python3.12'
+#
+# Quote EXPECTED_PYTHON: /health reports a literal ~, and an unquoted ~ in an
+# assignment is expanded when this file is sourced, so it would never match.
 #
 # chmod 600 that file: the ping URL is a capability, not just an address. Use a
 # different healthchecks.io UUID from every other service on the host, or one
