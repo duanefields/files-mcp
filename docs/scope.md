@@ -44,7 +44,7 @@ Provider prompt appeared.
 | Claude iPhone app | | |
 | Cowork, MacBook | | |
 | Claude Code, MacBook | | |
-| Claude desktop app | Pass | Connector added through claude.ai. list_mounts, one-call read of both files, a full strategy-advisor load, and an excluded path (`council/.git/config`) returning the server's "not found". A `council/../council.md` request was reported as "blocked by policy", which is not the server's wording, so it may have been stopped client-side before the server's own check ran. |
+| Claude desktop app | Pass | Connector added through claude.ai. list_mounts, one-call read of both files, a full strategy-advisor load, an excluded path (`council/.git/config`) returning the server's "not found", and `council/../council.md` refused by the server with "'..' is not allowed in paths". |
 | Scripted client, public URL | Pass | Both files in one call, about 300 ms from the development Mac. |
 
 ### Gate 2: works after the host reboots, with nobody at the keyboard
