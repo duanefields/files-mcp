@@ -135,3 +135,14 @@ no contents.
 Connector check, Claude desktop app, 2026-10-03: create, overwrite without a
 version (refused by the version guard), edit with the version, append, read
 back, move, and delete of a file and its folder all worked on the first try.
+
+## Known issue: very fast create-then-delete can come back
+
+The live phase 2 check created a folder, wrote, moved and deleted a file,
+and removed the folder, all within about a second on the host. The
+development Mac had already synced the early creates and, after the
+deletes, re-uploaded the folder and the moved file, so both reappeared on
+the host as online-only placeholders. Nothing was lost, and a person or a
+model working at normal speed won't hit it, but a delete that comes right
+after a create can be undone by sync. If a deleted file reappears, check
+whether it was created moments before.
