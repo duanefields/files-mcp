@@ -174,7 +174,13 @@ must be `chmod 600`, since a ping URL is a capability.
 */15 * * * * /Users/USERNAME/Code/files-mcp/scripts/self-update.sh >> /Users/USERNAME/.files-mcp/update.log 2>&1
 ```
 
-Use a **distinct** healthchecks.io UUID per service, so one service's pings
+`healthcheck.sh` reports to healthchecks.io (`PING_URL`), to an Uptime Kuma
+push monitor (`KUMA_PUSH_URL`, like `http://127.0.0.1:3001/api/push/<token>`),
+or both. For Kuma, create a **Push** monitor with a heartbeat interval a bit
+longer than the cron interval (900 seconds for a 10-minute cron). The script
+sends `status=up`, or `status=down` with the first problem as the message.
+
+Use a **distinct** check or monitor per service, so one service's pings
 cannot mask another's silence.
 
 The health check fails when the server does not answer, when any mount cannot

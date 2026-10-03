@@ -9,13 +9,20 @@
 #
 #   HEALTH_URL=http://127.0.0.1:18794/health
 #   PING_URL=https://hc-ping.com/your-uuid-here
+#   KUMA_PUSH_URL=http://127.0.0.1:3001/api/push/your-token-here
 #   EXPECTED_PYTHON='~/.local/share/uv/python/cpython-3.12.12-macos-aarch64-none/bin/python3.12'
 #
 # Quote EXPECTED_PYTHON: /health reports a literal ~, and an unquoted ~ in an
 # assignment is expanded when this file is sourced, so it would never match.
 #
-# chmod 600 that file: the ping URL is a capability, not just an address. Use a
-# different healthchecks.io UUID from every other service on the host, or one
+# Either or both of PING_URL (healthchecks.io) and KUMA_PUSH_URL (an Uptime
+# Kuma push monitor) can be set. Kuma gets status=up or status=down with the
+# problems as the message, and no start ping: a run that hangs shows up as a
+# missed heartbeat. Give the monitor a heartbeat interval a little longer than
+# the cron interval, so one slow run isn't an outage.
+#
+# chmod 600 that file: both URLs are capabilities, not just addresses. Use a
+# different check or monitor from every other service on the host, or one
 # service's silence gets masked by another's pings.
 #
 # Deliberately not `set -e`: the point is to collect every problem and still
@@ -28,6 +35,7 @@ CONFIG="${FILES_MCP_CHECK_ENV:-$HOME/.files-mcp/check.env}"
 
 HEALTH_URL="${HEALTH_URL:-http://127.0.0.1:18794/health}"
 PING_URL="${PING_URL:-}"
+KUMA_PUSH_URL="${KUMA_PUSH_URL:-}"
 EXPECTED_PYTHON="${EXPECTED_PYTHON:-}"
 
 stamp() { date '+%Y-%m-%d %H:%M:%S'; }
@@ -37,6 +45,12 @@ ping_hc() {
   [[ -z "$PING_URL" ]] && return 0
   local suffix="$1" body="${2:-}"
   curl -fsS -m 10 --data-raw "$body" "${PING_URL}${suffix}" >/dev/null 2>&1 || true
+}
+
+push_kuma() {
+  [[ -z "$KUMA_PUSH_URL" ]] && return 0
+  curl -fsS -m 10 -G --data-urlencode "status=$1" --data-urlencode "msg=$2" \
+    "$KUMA_PUSH_URL" >/dev/null 2>&1 || true
 }
 
 ping_hc "/start"
@@ -91,6 +105,9 @@ if (( ${#problems[@]} > 0 )); then
   done
   log "$message"
   ping_hc "/fail" "$message"
+  summary="${problems[0]}"
+  (( ${#problems[@]} > 1 )) && summary+=" (+$(( ${#problems[@]} - 1 )) more)"
+  push_kuma down "$summary"
   exit 1
 fi
 
@@ -98,3 +115,4 @@ fi
 # how the service has actually been behaving.
 log "files-mcp OK status=$status python=$python_version"
 ping_hc ""
+push_kuma up "OK python=$python_version"
