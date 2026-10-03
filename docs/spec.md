@@ -169,7 +169,7 @@ Tests run offline against mounts built in `tmp_path`, and must cover:
 
 Once the server is live and tested, the council switches over:
 
-- `council.md`, "Where files are": on claude.ai, use the files connector with paths starting `council/`. Keep the Dropbox connector as a read-only fallback.
+- `council.md`, "Where files are": where the council folder is on the local filesystem (Cowork with the folder attached, Claude Code on the MacBook), use it directly and fall back to the files connector only if it is missing. Everywhere else (claude.ai on the iPad, the iPhone app, the desktop app without the folder), use the files connector with paths starting `council/`. Keep the Dropbox connector as a read-only fallback.
 - `shared/rules.md`: drop the iPad inbox workaround and the "can't edit existing files" rule; advisors write directly, as on the MacBook. Startup reads become one `read_files` call.
 - Turn on the "later phases" rules that were waiting for edit and append: persona tuning notes and the usage log.
 

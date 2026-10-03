@@ -40,14 +40,19 @@ Provider prompt appeared.
 
 | Surface | Result | Setup quirks |
 | --- | --- | --- |
-| claude.ai, iPad | | |
+| claude.ai, iPad | Not tested | Assumed to match the iPhone app: same claude.ai connector, same account. |
 | Claude iPhone app | Pass | Same test prompt as the desktop app; no setup quirks reported. |
-| Cowork, MacBook | | |
+| Cowork, MacBook | Pass | Works through the connector. In practice Cowork should prefer its local folder; see the routing note in docs/spec.md. |
 | Claude Code, MacBook | | |
 | Claude desktop app | Pass | Connector added through claude.ai. list_mounts, one-call read of both files, a full strategy-advisor load, an excluded path (`council/.git/config`) returning the server's "not found", and `council/../council.md` refused by the server with "'..' is not allowed in paths". |
 | Scripted client, public URL | Pass | Both files in one call, about 300 ms from the development Mac. |
 
 ### Gate 2: works after the host reboots, with nobody at the keyboard
+
+Waived by the owner on 2026-10-03; the host was not rebooted for this test.
+The LaunchAgent uses the same `RunAtLoad` and `KeepAlive` setup as the other
+servers on the host, which do come back after a reboot, but this server
+has not been seen to.
 
 ### Gate 3: an online-only placeholder returns content or fails clearly, without hanging
 
