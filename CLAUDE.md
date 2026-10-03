@@ -68,9 +68,11 @@ An MCP server that gives remote clients file access to a few configured
 folders ("mounts") on one machine, like Docker volume mounts. Clients see only
 mount names; host paths never appear in a tool result, an error, or `/health`.
 
-`docs/spec.md` is the design, with the phase plan. Phases 0 and 1 are built,
-all read-only: `list_mounts`, `list_directory`, `read_files`, `glob`,
-`search_text`, `get_file_info`. Phase 2 adds writes and the audit log.
+`docs/spec.md` is the design, with the phase plan. All three phases are
+built: reads (`list_mounts`, `list_directory`, `read_files`, `glob`,
+`search_text`, `get_file_info`), and writes (`write_file`, `edit_file`,
+`append_file`, `create_directory`, `move_file`, `delete_file`) with the audit
+log.
 `docs/scope.md` records what was tested where.
 
 1. **src/files_mcp/config.py**: loads and validates `config.yaml`. Mount roots
@@ -85,9 +87,16 @@ all read-only: `list_mounts`, `list_directory`, `read_files`, `glob`,
    worker thread. `walk()` is the one directory walker; glob and search are
    built on it so they inherit its exclusion and symlink rules. Do not add a
    second walker.
-4. **src/files_mcp/server.py**: the tools, `/health`, and transport selection
-   in `main()`.
-5. **src/files_mcp/auth.py**: password-guarded OAuth 2.1 provider, copied from
+4. **src/files_mcp/write.py**: blocking write operations and the write rules:
+   read-only mounts, version checks, atomic temp-file-then-rename writes,
+   never moving or deleting a mount root or through a symlink, never
+   recursive deletes.
+5. **src/files_mcp/audit.py**: one JSON line per write-tool call in
+   `<state dir>/audit.log`. Never contents.
+6. **src/files_mcp/server.py**: the tools, `/health`, and transport selection
+   in `main()`. Write tools go through `_write()`, which serializes them,
+   applies the timeout, and audits the outcome.
+7. **src/files_mcp/auth.py**: password-guarded OAuth 2.1 provider, copied from
    weather-mcp. Domain-independent apart from the scope (`files:manage`), the
    env prefix, and the login page title. **Keep it that way**, so a fix in one
    project can be carried to the others by reading a diff.

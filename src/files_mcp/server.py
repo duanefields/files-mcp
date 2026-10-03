@@ -1,8 +1,9 @@
 """The MCP server: tool definitions, health endpoint, and transport selection.
 
-Read-only so far (phases 0 and 1 of docs/spec.md). Every path a
+Reads (phases 0 and 1 of docs/spec.md) and writes (phase 2). Every path a
 client passes goes through ``paths.resolve`` before anything touches the disk,
-and every disk operation runs in a worker thread under a timeout.
+every disk operation runs in a worker thread under a timeout, and every write
+tool call is recorded in the audit log.
 """
 
 from __future__ import annotations
@@ -20,10 +21,10 @@ from typing import Annotated, Any
 
 from fastmcp import FastMCP
 from fastmcp.tools.tool import ToolResult
-from pydantic import Field
+from pydantic import BaseModel, Field
 from starlette.responses import JSONResponse
 
-from . import fs
+from . import audit, fs, write
 from .config import Config, ConfigError, load_config
 from .fs import FileError
 from .paths import PathError, nfc, resolve, split
@@ -46,9 +47,14 @@ mcp = FastMCP(
         "To find files, use glob to match names and search_text to match "
         "contents, rather than listing folders and reading everything.\n\n"
         "To read several files, pass them all to one read_files call rather than "
-        "calling it once per file. Each file comes back with a version; keep it, "
-        "because changing an existing file will require the version from a "
-        "recent read, so a stale copy cannot overwrite a newer edit.\n\n"
+        "calling it once per file. Each file comes back with a version; keep it. "
+        "Replacing an existing file with write_file requires the version from a "
+        "recent read, and edit_file should be given it too, so a stale copy "
+        "cannot overwrite a newer change made elsewhere. For a small change, "
+        "use edit_file rather than rewriting the whole file; to add to the end "
+        "of a file, use append_file.\n\n"
+        "Some mounts are read-only; list_mounts says which. delete_file is "
+        "permanent as far as this server is concerned: it keeps no copy.\n\n"
         "Listings are paginated and say 'Showing 1-200 of 1,342' when there is "
         "more. Never report a page as the whole answer: say how many there are, "
         "and fetch the rest before counting or summarizing."
@@ -127,7 +133,8 @@ async def _blocking(func, *args, what: str, timeout: float | None = None):
         raise FileError(
             f"{what} took longer than {timeout:.0f} seconds. If the folder "
             f"is cloud-synced, the file may not be downloaded to this machine yet; "
-            f"try again in a minute."
+            f"try again in a minute. A change may still complete in the background, "
+            f"so check with get_file_info before repeating one."
         ) from None
 
 
@@ -465,6 +472,265 @@ async def get_file_info(
         lines.append(f"- created: {info['created']}")
     lines.append(f"- modified: {info['modified']}")
     return _result("\n".join(lines), info)
+
+
+# ----------------------------------------------------------------------
+# Writes
+# ----------------------------------------------------------------------
+
+# One write at a time. It cannot stop the host or a sync client changing a
+# file between a version check and the rename, but it does stop two calls
+# from this server interleaving.
+_write_lock = asyncio.Lock()
+
+
+async def _write(tool: str, paths: list[str], func, *args, what: str) -> dict | str:
+    """Run one write operation: serialized, under the timeout, and audited.
+
+    Returns the operation's result, or an error message for the model. The
+    audit line is written either way; a refusal is worth seeing too.
+    """
+    try:
+        async with _write_lock:
+            result = await _blocking(func, *args, what=what)
+    except (PathError, FileError) as exc:
+        audit.record(tool, paths, f"refused: {exc}")
+        return str(exc)
+    except OSError as exc:
+        message = f"{', '.join(paths)}: the change failed ({exc.strerror})."
+        audit.record(tool, paths, f"failed: {exc.strerror}")
+        return message
+    audit.record(tool, paths, "ok")
+    return result
+
+
+def _resolve_for_write(tool: str, *paths: str):
+    """Resolve each path, auditing a refusal. Returns targets, or an error message."""
+    try:
+        return [resolve(_cfg(), path) for path in paths]
+    except PathError as exc:
+        audit.record(tool, list(paths), f"refused: {exc}")
+        return str(exc)
+
+
+@mcp.tool
+async def write_file(
+    path: Annotated[str, Field(description="The file, starting with the mount name.")],
+    content: Annotated[str, Field(description="The complete new contents, as UTF-8 text.")],
+    if_version: Annotated[
+        str | None, Field(description="Required to replace an existing file: its current version.")
+    ] = None,
+) -> ToolResult:
+    """Create a file, or replace one you have just read.
+
+    Creating a new file needs no version, and any missing folders are created.
+    Replacing an existing file requires if_version: the version read_files or
+    get_file_info returned. If the file has changed since then -- edited
+    elsewhere, or synced in from another machine -- the write is refused, so
+    nothing newer is lost. The write is atomic: readers see the old file or
+    the new one, never half of each.
+
+    For a small change to an existing file, edit_file is usually better; to
+    add to the end, use append_file.
+
+    Args:
+        path: The file, like "notes/2026/october.md".
+        content: The complete contents to write.
+        if_version: The file's version from a recent read. Required when the
+            file already exists; leave it out when creating a new file.
+    """
+    targets = _resolve_for_write("write_file", path)
+    if isinstance(targets, str):
+        return _error_result(targets)
+    result = await _write(
+        "write_file", [path], write.write_file, targets[0], content, if_version,
+        _cfg().limits, what=f"Writing {targets[0].display}",
+    )
+    if isinstance(result, str):
+        return _error_result(result)
+    verb = "Created" if result["created"] else "Replaced"
+    return _result(
+        f"{verb} {result['path']} ({result['size']:,} bytes). New version {result['version']}.",
+        result,
+    )
+
+
+class Edit(BaseModel):
+    old_text: str = Field(description="Text to find. Must occur exactly once, matched exactly.")
+    new_text: str = Field(description="Text to put in its place.")
+
+
+@mcp.tool
+async def edit_file(
+    path: Annotated[str, Field(description="The file, starting with the mount name.")],
+    edits: Annotated[list[Edit], Field(description="Replacements, applied in order.")],
+    if_version: Annotated[
+        str | None, Field(description="The version from a recent read. Recommended.")
+    ] = None,
+    dry_run: Annotated[bool, Field(description="Show the diff without writing.")] = False,
+) -> ToolResult:
+    """Change part of a text file by exact find-and-replace.
+
+    Each edit's old_text must occur exactly once, matched character for
+    character -- whitespace and line breaks included, with no normalization.
+    Edits apply in order, each to the text the previous ones left. If any edit
+    matches zero times or more than once, nothing is written and the error
+    says which edit and how many matches it found.
+
+    Pass if_version from a recent read whenever you have it: then the edit is
+    refused if the file changed since, instead of being applied to text you
+    have not seen. Returns a unified diff and the new version. dry_run=true
+    returns the diff without writing.
+
+    Args:
+        path: The file, like "notes/todo.md".
+        edits: The replacements, like [{"old_text": "- [ ] call Sam",
+            "new_text": "- [x] call Sam"}].
+        if_version: The file's version from a recent read.
+        dry_run: Return the diff without changing the file.
+    """
+    targets = _resolve_for_write("edit_file", path)
+    if isinstance(targets, str):
+        return _error_result(targets)
+    pairs = [(edit.old_text, edit.new_text) for edit in edits]
+    target = targets[0]
+    if dry_run:
+        try:
+            result = await _blocking(
+                write.edit_file, target, pairs, if_version, True, _cfg().limits,
+                what=f"Editing {target.display}",
+            )
+        except (PathError, FileError) as exc:
+            return _error_result(str(exc))
+        except OSError as exc:
+            return _error_result(f"{path} could not be read ({exc.strerror}).")
+    else:
+        result = await _write(
+            "edit_file", [path], write.edit_file, target, pairs, if_version, False,
+            _cfg().limits, what=f"Editing {target.display}",
+        )
+        if isinstance(result, str):
+            return _error_result(result)
+
+    if not result["changed"]:
+        head = f"No change: the edits leave {result['path']} as it was."
+    elif dry_run:
+        head = f"Dry run: nothing was written. {result['path']} would change like this:"
+    else:
+        head = f"Edited {result['path']}. New version {result['version']}."
+    return _result(f"{head}\n\n{result['diff']}".rstrip(), result)
+
+
+@mcp.tool
+async def append_file(
+    path: Annotated[str, Field(description="The file, starting with the mount name.")],
+    content: Annotated[str, Field(description="Text to add to the end.")],
+) -> ToolResult:
+    """Add text to the end of a file, creating it (and its folders) if needed.
+
+    A newline is added first if the file does not already end with one. No
+    version is needed: appending cannot discard anyone else's change.
+
+    Args:
+        path: The file, like "notes/log.md".
+        content: The text to add.
+    """
+    targets = _resolve_for_write("append_file", path)
+    if isinstance(targets, str):
+        return _error_result(targets)
+    result = await _write(
+        "append_file", [path], write.append_file, targets[0], content, _cfg().limits,
+        what=f"Appending to {targets[0].display}",
+    )
+    if isinstance(result, str):
+        return _error_result(result)
+    verb = "Created" if result["created"] else "Appended to"
+    return _result(
+        f"{verb} {result['path']} (now {result['size']:,} bytes). New version "
+        f"{result['version']}.",
+        result,
+    )
+
+
+@mcp.tool
+async def create_directory(
+    path: Annotated[str, Field(description="The folder, starting with the mount name.")],
+) -> ToolResult:
+    """Create a folder, along with any missing parent folders.
+
+    Succeeds without changing anything if the folder already exists.
+
+    Args:
+        path: The folder, like "notes/2026/october".
+    """
+    targets = _resolve_for_write("create_directory", path)
+    if isinstance(targets, str):
+        return _error_result(targets)
+    result = await _write(
+        "create_directory", [path], write.create_directory, targets[0],
+        what=f"Creating {targets[0].display}",
+    )
+    if isinstance(result, str):
+        return _error_result(result)
+    text = f"Created {result['path']}." if result["created"] else f"{result['path']} already exists."
+    return _result(text, result)
+
+
+@mcp.tool
+async def move_file(
+    source: Annotated[str, Field(description="What to move, starting with the mount name.")],
+    destination: Annotated[str, Field(description="Its new path, starting with a mount name.")],
+) -> ToolResult:
+    """Move or rename a file or folder, within a mount or between writable mounts.
+
+    Refused if something already exists at the destination; nothing is ever
+    overwritten. Missing parent folders at the destination are created.
+
+    Args:
+        source: The file or folder to move, like "notes/draft.md".
+        destination: Its full new path, like "notes/archive/draft.md".
+    """
+    targets = _resolve_for_write("move_file", source, destination)
+    if isinstance(targets, str):
+        return _error_result(targets)
+    result = await _write(
+        "move_file", [source, destination], write.move, *targets,
+        what=f"Moving {targets[0].display}",
+    )
+    if isinstance(result, str):
+        return _error_result(result)
+    kind = "folder" if result["type"] == "dir" else "file"
+    return _result(f"Moved {kind} {result['source']} to {result['destination']}.", result)
+
+
+@mcp.tool
+async def delete_file(
+    path: Annotated[str, Field(description="The file or empty folder, starting with the mount name.")],
+) -> ToolResult:
+    """Delete one file, or one empty folder. Never deletes a folder's contents.
+
+    This server keeps no copy. The host may have its own history (a sync
+    service's deleted-files view, for example), but do not count on it:
+    confirm with the user before deleting anything they have not clearly
+    asked to delete.
+
+    Args:
+        path: The file or empty folder, like "notes/old.md".
+    """
+    targets = _resolve_for_write("delete_file", path)
+    if isinstance(targets, str):
+        return _error_result(targets)
+    result = await _write(
+        "delete_file", [path], write.delete, targets[0], what=f"Deleting {targets[0].display}",
+    )
+    if isinstance(result, str):
+        return _error_result(result)
+    kind = "folder" if result["type"] == "dir" else "file"
+    return _result(
+        f"Deleted {kind} {result['path']}. This server keeps no copy; it may be "
+        f"recoverable from the host's own history, such as a sync service's deleted files.",
+        result,
+    )
 
 
 # ----------------------------------------------------------------------

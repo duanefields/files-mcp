@@ -39,6 +39,9 @@ class Resolved:
     real: Path
     # What the client sees: "<mount>/<relative path>", NFC, or just "<mount>".
     display: str
+    # The path before symlinks are followed. Moving or deleting has to know
+    # whether the name itself is a link, which ``real`` cannot say.
+    located: Path
 
 
 def nfc(text: str) -> str:
@@ -83,7 +86,8 @@ def resolve(config: Config, path: str) -> Resolved:
     if any(mount.is_excluded(segment) for segment in segments):
         raise not_found(display)
 
-    real = Path(os.path.realpath(_locate(mount.root, segments)))
+    located = _locate(mount.root, segments)
+    real = Path(os.path.realpath(located))
     if real != mount.root and not real.is_relative_to(mount.root):
         raise PathError(
             f"{display} points outside the {name!r} mount, so it can't be used. "
@@ -94,7 +98,7 @@ def resolve(config: Config, path: str) -> Resolved:
     if any(mount.is_excluded(part) for part in real.relative_to(mount.root).parts):
         raise not_found(display)
 
-    return Resolved(mount=mount, real=real, display=display)
+    return Resolved(mount=mount, real=real, display=display, located=located)
 
 
 def _locate(root: Path, segments: list[str]) -> Path:

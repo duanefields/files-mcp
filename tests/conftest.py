@@ -23,6 +23,8 @@ The tree, under ``tmp_path``::
       link-advisors -> advisors     stays inside
     other/                          mount "other", rw
       readme.md
+      link-out -> ../outside        escapes
+      link-secret -> ../outside/secret.txt
 """
 
 import os
@@ -53,9 +55,11 @@ NFD_NAME = unicodedata.normalize("NFD", "café.md")
 
 
 @pytest.fixture(autouse=True)
-def clean_state(monkeypatch):
+def clean_state(monkeypatch, tmp_path):
     for name in FILES_ENV:
         monkeypatch.delenv(name, raising=False)
+    # The audit log lives in the state dir; it must never be the real one.
+    monkeypatch.setenv("FILES_MCP_STATE_DIR", str(tmp_path / "state"))
     server._config = None
     server._health_cache = None
     yield
@@ -91,6 +95,8 @@ def tree(tmp_path):
     other = tmp_path / "other"
     other.mkdir()
     (other / "readme.md").write_text("other mount\n")
+    os.symlink("../outside", other / "link-out")
+    os.symlink("../outside/secret.txt", other / "link-secret")
 
     return tmp_path
 

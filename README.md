@@ -9,7 +9,7 @@ really lives, and whether it is read-only or read-write. Clients see only the
 mount names. Nothing else on the machine is reachable, and the server cannot
 run commands.
 
-**Status: phase 1, read-only.** Writes come in phase 2. See [docs/spec.md](docs/spec.md) for the full
+**Status: phase 2: reads and writes.** See [docs/spec.md](docs/spec.md) for the full
 design and the phase plan.
 
 ## Tools
@@ -22,6 +22,12 @@ design and the phase plan.
 | `glob` | File paths matching a pattern like `notes/*/2026-*.md` or `notes/**/*.md`; paginated |
 | `search_text` | Matching lines (path and line number) under a folder; case-insensitive substring or regex, optional file-name filter; paginated |
 | `get_file_info` | Type, size, created and modified times, and the content `version` |
+| `write_file` | Create a file, or replace one; replacing needs `if_version` from a recent read. Atomic |
+| `edit_file` | Exact find-and-replace edits, all or nothing; returns a diff; `dry_run` to preview |
+| `append_file` | Add to the end of a file, creating it if needed |
+| `create_directory` | Create a folder and its parents |
+| `move_file` | Move or rename within or between writable mounts; never overwrites |
+| `delete_file` | Delete one file or one empty folder; never recursive |
 
 Every path starts with a mount name, like `notes/2026/october.md`.
 
@@ -60,8 +66,13 @@ For a remote connector, put it behind a tunnel with password OAuth
   `..` is refused.
 - Excluded names (from the config, plus the server's own temp files) are
   invisible: not listed, not readable, and reported as not found.
-- Only UTF-8 text is read. Per-file size and per-call file-count limits come
-  from the config.
+- Only UTF-8 text is read or written. Per-file size and per-call file-count
+  limits come from the config.
+- Read-only mounts refuse every write. Replacing or editing a file checks a
+  content version, so a stale client cannot overwrite a newer change.
+- Every write-tool call, refusals included, is logged to
+  `~/.files-mcp/audit.log`: time, tool, mount-relative paths, OAuth client,
+  and result. Never file contents.
 - `/health` is unauthenticated and reports only mount names, modes and whether
   each is readable. It never reports host paths or file names.
 

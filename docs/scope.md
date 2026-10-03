@@ -96,3 +96,28 @@ Choices the spec left open:
   The whole search runs under a 60-second timeout.
 - `get_file_info` on a folder returns type and times, no size or version.
   `created` is null on platforms that do not expose a birth time.
+
+## Phase 2: writes and the audit log
+
+Built 2026-10-03. 282 offline tests. Every write tool is tested against
+read-only refusal and every escape (`..`, an unknown mount, symlinks out,
+excluded and temp names), each asserting the whole tree is byte-for-byte
+unchanged afterward.
+
+Choices the spec left open:
+
+- `write_file` refuses a version for a file that no longer exists, rather
+  than silently creating it. Replacing keeps the old file's permissions.
+- `edit_file` checks the version (when given) against the file as it is now,
+  applies edits sequentially, writes nothing if any edit fails, and skips the
+  write entirely when the edits change nothing. Dry runs are not audited.
+- `append_file` returns the new version, and refuses a file whose first 8 KB
+  contains a NUL byte.
+- `move_file` creates missing destination folders, allows a case-only rename
+  on a case-insensitive disk, refuses to move a folder into itself, and falls
+  back to copy-and-delete across volumes.
+- `delete_file` treats a folder holding only `.DS_Store` as empty. Any other
+  contents, visible or not, make it non-empty.
+- Neither `move_file` nor `delete_file` acts on a symlink itself, or on a
+  mount's top folder.
+- Write tools run one at a time inside the server.

@@ -150,6 +150,18 @@ cloudflared --config ~/.cloudflared/config.yml tunnel ingress validate
 **No Cloudflare Access application in front of the hostname.** Access intercepts
 the OAuth callbacks and breaks the connector handshake.
 
+## Audit log
+
+Every call to a write tool appends one JSON line to `audit.log` in the state
+directory (`~/.files-mcp/` by default): time, tool, the mount-relative
+path(s), the OAuth client ID, and the result, refusals included. File
+contents never go in. It is created `600` and is not rotated; it grows by one
+short line per write.
+
+```bash
+tail -5 ~/.files-mcp/audit.log
+```
+
 ## Monitoring
 
 `scripts/healthcheck.sh` polls `/health` and reports to a dead-man's-switch;
