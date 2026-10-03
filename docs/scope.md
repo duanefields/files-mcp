@@ -41,7 +41,7 @@ Provider prompt appeared.
 | Surface | Result | Setup quirks |
 | --- | --- | --- |
 | claude.ai, iPad | | |
-| Claude iPhone app | | |
+| Claude iPhone app | Pass | Same test prompt as the desktop app; no setup quirks reported. |
 | Cowork, MacBook | | |
 | Claude Code, MacBook | | |
 | Claude desktop app | Pass | Connector added through claude.ai. list_mounts, one-call read of both files, a full strategy-advisor load, an excluded path (`council/.git/config`) returning the server's "not found", and `council/../council.md` refused by the server with "'..' is not allowed in paths". |
