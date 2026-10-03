@@ -356,3 +356,20 @@ async def test_read_files_refuses_escapes(tree, config, path, message):
     assert message in _error_of(result)
     assert "top secret" not in text_of(result)
     assert str(tree) not in text_of(result)
+
+
+@pytest.mark.parametrize("path, message", ESCAPES)
+async def test_search_text_refuses_escapes(tree, config, path, message):
+    result = await server.search_text(query="secret", path=path)
+
+    assert message in _error_of(result)
+    assert "top secret" not in text_of(result)
+    assert str(tree) not in text_of(result)
+
+
+@pytest.mark.parametrize("path, message", ESCAPES)
+async def test_get_file_info_refuses_escapes(tree, config, path, message):
+    result = await server.get_file_info(path=path)
+
+    assert message in _error_of(result)
+    assert str(tree) not in text_of(result)

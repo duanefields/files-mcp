@@ -1,6 +1,6 @@
 # files-mcp: spec
 
-Status: phase 0 in progress, 2026-10-03. Real deployment values (hostname, port, paths) are in the gitignored `docs/local/`; this copy uses placeholders.
+Status: phases 0 and 1 done, 2026-10-03. Real deployment values (hostname, port, paths) are in the gitignored `docs/local/`; this copy uses placeholders.
 
 ## Purpose
 

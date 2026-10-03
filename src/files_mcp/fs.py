@@ -17,7 +17,9 @@ import os
 import stat
 import sys
 from datetime import datetime
+from fnmatch import fnmatchcase
 from pathlib import Path
+from typing import Callable, Iterator
 
 from .config import Limits, Mount
 from .paths import Resolved, nfc, not_found
@@ -81,19 +83,32 @@ def list_entries(target: Resolved, recursive: bool) -> list[dict]:
     excluded name. A recursive walk never descends through a symlinked folder,
     so a link cannot loop the walk or list one folder twice.
     """
+    _require_folder(target)
+    depth = None if recursive else 1
+    return [entry for _, entry in walk(target, max_depth=depth)]
+
+
+def walk(target: Resolved, max_depth: int | None = None) -> Iterator[tuple[Path, dict]]:
+    """Yield ``(real path, entry)`` for everything visible under a folder, in path order.
+
+    The real path is for reading and must never reach a client; the entry is
+    what a client sees. ``max_depth`` 1 is the folder's immediate contents;
+    None is everything below it. The folder itself is not checked here --
+    callers do that, so each can word its own error.
+    """
+    yield from _walk(target.mount, target.real, target.display, max_depth, top=True)
+
+
+def _require_folder(target: Resolved) -> None:
     if not target.real.exists():
         raise _missing(target.display)
     if not target.real.is_dir():
         raise FileError(f"{target.display} is a file, not a folder. Use read_files to read it.")
 
-    entries: list[dict] = []
-    _walk(target.mount, target.real, target.display, recursive, entries, top=True)
-    return entries
-
 
 def _walk(
-    mount: Mount, folder: Path, display: str, recursive: bool, out: list[dict], top: bool = False
-) -> None:
+    mount: Mount, folder: Path, display: str, max_depth: int | None, top: bool = False
+) -> Iterator[tuple[Path, dict]]:
     try:
         names = sorted(os.listdir(folder), key=nfc)
     except OSError as exc:
@@ -123,13 +138,14 @@ def _walk(
 
         path = f"{display}/{nfc(name)}"
         if stat.S_ISDIR(info.st_mode):
-            out.append({"name": nfc(name), "path": path, "type": "dir",
-                        "modified": _timestamp(info.st_mtime)})
-            if recursive and not is_link:
-                _walk(mount, real, path, recursive, out)
+            yield real, {"name": nfc(name), "path": path, "type": "dir",
+                         "modified": _timestamp(info.st_mtime)}
+            deeper = None if max_depth is None else max_depth - 1
+            if (deeper is None or deeper > 0) and not is_link:
+                yield from _walk(mount, real, path, deeper)
         elif stat.S_ISREG(info.st_mode):
-            out.append({"name": nfc(name), "path": path, "type": "file",
-                        "size": info.st_size, "modified": _timestamp(info.st_mtime)})
+            yield real, {"name": nfc(name), "path": path, "type": "file",
+                         "size": info.st_size, "modified": _timestamp(info.st_mtime)}
         # Sockets, FIFOs and devices are not files anyone means to read.
 
 
@@ -231,3 +247,169 @@ def _decode(data: bytes, display: str) -> str:
 def _missing(display: str) -> FileError:
     # Same wording as an excluded path, deliberately.
     return FileError(str(not_found(display)))
+
+
+# ----------------------------------------------------------------------
+# Glob
+# ----------------------------------------------------------------------
+
+WILDCARDS = frozenset("*?[")
+
+
+def has_wildcard(segment: str) -> bool:
+    return any(c in WILDCARDS for c in segment)
+
+
+def match_segments(pattern: list[str], parts: list[str]) -> bool:
+    """Match path segments against pattern segments.
+
+    Each segment matches with ``fnmatch`` rules (``*``, ``?``, ``[...]``),
+    never across a ``/``. A ``**`` segment matches zero or more whole
+    segments. Case-sensitive, against names as stored on disk.
+    """
+    if not pattern:
+        return not parts
+    if pattern[0] == "**":
+        return any(match_segments(pattern[1:], parts[i:]) for i in range(len(parts) + 1))
+    return bool(parts) and fnmatchcase(parts[0], pattern[0]) and match_segments(
+        pattern[1:], parts[1:]
+    )
+
+
+def glob_files(base: Resolved | None, rest: list[str]) -> list[dict]:
+    """Files under ``base`` whose path below it matches ``rest``, in path order.
+
+    ``base`` is the pattern's literal prefix, already resolved; None means it
+    does not exist (or is excluded, which must look the same), so nothing
+    matches. With no wildcard segments at all, ``rest`` is empty and the
+    pattern names one file.
+    """
+    if base is None or not base.real.exists():
+        return []
+    if not rest:
+        if base.real.is_file():
+            info = base.real.stat()
+            return [{"name": base.display.rsplit("/", 1)[-1], "path": base.display,
+                     "type": "file", "size": info.st_size,
+                     "modified": _timestamp(info.st_mtime)}]
+        return []
+    if not base.real.is_dir():
+        return []
+
+    # Without **, nothing deeper than the pattern can match, so don't walk it.
+    depth = None if "**" in rest else len(rest)
+    prefix = len(base.display.split("/"))
+    return [
+        entry
+        for _, entry in walk(base, max_depth=depth)
+        if entry["type"] == "file" and match_segments(rest, entry["path"].split("/")[prefix:])
+    ]
+
+
+# ----------------------------------------------------------------------
+# Search
+# ----------------------------------------------------------------------
+
+# A matching line is returned whole up to this, then cut. Minified files and
+# data dumps can put megabytes on one line.
+MAX_LINE_CHARS = 500
+
+
+def search(
+    target: Resolved,
+    matches: Callable[[str], bool],
+    file_glob: list[str] | None,
+    limits: Limits,
+) -> dict:
+    """Every matching line in the text files at or under ``target``.
+
+    ``matches`` gets each line, NFC-normalized. ``file_glob`` filters files by
+    their path below ``target`` with ``match_segments`` rules; a one-segment
+    pattern such as ``*.md`` matches the file name at any depth.
+
+    Files over ``max_read_bytes`` and files that are not UTF-8 text are
+    skipped and counted rather than failing the search.
+    """
+    if not target.real.exists():
+        raise _missing(target.display)
+
+    if target.real.is_file():
+        candidates = [(target.real, target.display)]
+    else:
+        prefix = len(target.display.split("/"))
+        candidates = []
+        for real, entry in walk(target):
+            if entry["type"] != "file":
+                continue
+            parts = entry["path"].split("/")[prefix:]
+            if file_glob is not None:
+                if len(file_glob) == 1:
+                    if not fnmatchcase(parts[-1], file_glob[0]):
+                        continue
+                elif not match_segments(file_glob, parts):
+                    continue
+            candidates.append((real, entry["path"]))
+
+    hits: list[dict] = []
+    skipped_large = skipped_binary = 0
+    for real, display in candidates:
+        try:
+            if real.stat().st_size > limits.max_read_bytes:
+                skipped_large += 1
+                continue
+            data = real.read_bytes()
+        except OSError:
+            continue
+        if b"\x00" in data[:SNIFF_BYTES]:
+            skipped_binary += 1
+            continue
+        try:
+            text = data.decode("utf-8")
+        except UnicodeDecodeError:
+            skipped_binary += 1
+            continue
+        for number, line in enumerate(text.splitlines(), start=1):
+            line = nfc(line)
+            if matches(line):
+                if len(line) > MAX_LINE_CHARS:
+                    line = line[:MAX_LINE_CHARS] + "…"
+                hits.append({"path": display, "line": number, "text": line})
+
+    return {
+        "matches": hits,
+        "files_searched": len(candidates) - skipped_large - skipped_binary,
+        "skipped_large": skipped_large,
+        "skipped_binary": skipped_binary,
+    }
+
+
+# ----------------------------------------------------------------------
+# File info
+# ----------------------------------------------------------------------
+
+
+def file_info(target: Resolved) -> dict:
+    """Type, size, times, and (for a file) the content version.
+
+    The version is the same whole-file hash ``read_text`` returns, streamed so
+    a file of any size can be checked without reading it into memory.
+    """
+    if not target.real.exists():
+        raise _missing(target.display)
+    info = target.real.stat()
+    # st_birthtime exists on macOS and the BSDs; Linux does not expose it here.
+    created = getattr(info, "st_birthtime", None)
+    result = {
+        "path": target.display,
+        "type": "dir" if target.real.is_dir() else "file",
+        "created": _timestamp(created) if created is not None else None,
+        "modified": _timestamp(info.st_mtime),
+    }
+    if result["type"] == "file":
+        digest = hashlib.sha256()
+        with open(target.real, "rb") as handle:
+            while chunk := handle.read(CHUNK):
+                digest.update(chunk)
+        result["size"] = info.st_size
+        result["version"] = digest.hexdigest()[:16]
+    return result

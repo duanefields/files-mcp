@@ -4,6 +4,12 @@ What was tested, on which surface, and what happened. Phase 1 does not start
 until every phase 0 gate below passes. Host-specific detail stays in
 `docs/local/`.
 
+## Decision
+
+Phase 0: **go**, 2026-10-03, on the owner's call. Gates 1 and 3 passed;
+gate 2 (reboot) was waived and gate 4 (iPad timing) was not measured. Phase 1
+started the same day.
+
 ## Phase 0, step 0a: local
 
 | Check | Result | Notes |
@@ -67,3 +73,22 @@ try again; that path is covered by a test, not yet seen live.
 | --- | --- | --- |
 | Dropbox connector | | |
 | files-mcp `read_files` | 1 | |
+
+## Phase 1: glob, search_text, get_file_info
+
+Built 2026-10-03. 168 offline tests (escapes for every tool, excluded
+prefixes indistinguishable from missing ones, `**`, NFC/NFD in patterns and
+in file text, skipped large and binary files, line pagination). Checked over
+stdio against the real council folder on the development Mac: all three
+tools behave as specified.
+
+Choices the spec left open:
+
+- `glob` returns files only, matches case-sensitively, and supports `**` for
+  any number of folders. The first segment must be a literal mount name.
+- `search_text`'s `glob` filter with one segment (`*.md`) matches the file
+  name at any depth; with a `/` it matches the path below the searched
+  folder. Lines longer than 500 characters are cut. Default `limit` is 100.
+  The whole search runs under a 60-second timeout.
+- `get_file_info` on a folder returns type and times, no size or version.
+  `created` is null on platforms that do not expose a birth time.

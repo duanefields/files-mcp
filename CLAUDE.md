@@ -68,9 +68,10 @@ An MCP server that gives remote clients file access to a few configured
 folders ("mounts") on one machine, like Docker volume mounts. Clients see only
 mount names; host paths never appear in a tool result, an error, or `/health`.
 
-`docs/spec.md` is the design, with the phase plan. Phase 0 (read-only:
-`list_mounts`, `list_directory`, `read_files`) is what is built. Phase 1 adds
-`glob`, `search_text`, `get_file_info`; phase 2 adds writes and the audit log.
+`docs/spec.md` is the design, with the phase plan. Phases 0 and 1 are built,
+all read-only: `list_mounts`, `list_directory`, `read_files`, `glob`,
+`search_text`, `get_file_info`. Phase 2 adds writes and the audit log.
+`docs/scope.md` records what was tested where.
 
 1. **src/files_mcp/config.py**: loads and validates `config.yaml`. Mount roots
    are resolved with `realpath` at load time. A bad config is a startup failure,
@@ -80,7 +81,10 @@ mount names; host paths never appear in a tool result, an error, or `/health`.
    test in `tests/test_paths.py` and the per-tool escape tests in
    `tests/test_server.py`.
 3. **src/files_mcp/fs.py**: blocking filesystem work (listing, reading,
-   versions). Synchronous, called from a worker thread.
+   glob matching, search, file info, versions). Synchronous, called from a
+   worker thread. `walk()` is the one directory walker; glob and search are
+   built on it so they inherit its exclusion and symlink rules. Do not add a
+   second walker.
 4. **src/files_mcp/server.py**: the tools, `/health`, and transport selection
    in `main()`.
 5. **src/files_mcp/auth.py**: password-guarded OAuth 2.1 provider, copied from
@@ -112,7 +116,11 @@ mount names; host paths never appear in a tool result, an error, or `/health`.
   **not found**, never "excluded". `.files-mcp-tmp-*` is always excluded.
 - Names are compared and returned in NFC. On a filesystem that does not
   normalize (Linux CI), `_locate` falls back to an NFC scan of the parent.
-- No case handling of our own; APFS is case-insensitive already.
+- No case handling of our own; APFS is case-insensitive already. Glob
+  patterns match case-sensitively against names as stored.
+- `glob` resolves the pattern's literal prefix with `resolve()`. A missing or
+  excluded prefix (`paths.NotFound`) is zero matches, not an error, so the
+  two stay indistinguishable; an escaping prefix is still an error.
 
 ## Things that bite on macOS
 

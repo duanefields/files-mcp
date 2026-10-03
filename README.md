@@ -9,7 +9,7 @@ really lives, and whether it is read-only or read-write. Clients see only the
 mount names. Nothing else on the machine is reachable, and the server cannot
 run commands.
 
-**Status: phase 0, read-only.** See [docs/spec.md](docs/spec.md) for the full
+**Status: phase 1, read-only.** Writes come in phase 2. See [docs/spec.md](docs/spec.md) for the full
 design and the phase plan.
 
 ## Tools
@@ -19,6 +19,9 @@ design and the phase plan.
 | `list_mounts` | The mounts, and whether each is read-only |
 | `list_directory` | A folder's entries with type, size and modified time; optionally recursive; paginated |
 | `read_files` | Up to 25 text files in one call, each with a content `version`; `head` or `tail` for the first or last lines |
+| `glob` | File paths matching a pattern like `notes/*/2026-*.md` or `notes/**/*.md`; paginated |
+| `search_text` | Matching lines (path and line number) under a folder; case-insensitive substring or regex, optional file-name filter; paginated |
+| `get_file_info` | Type, size, created and modified times, and the content `version` |
 
 Every path starts with a mount name, like `notes/2026/october.md`.
 

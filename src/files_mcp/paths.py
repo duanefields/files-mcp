@@ -32,6 +32,10 @@ class PathError(Exception):
     """A path the client cannot use. The message says what to do instead."""
 
 
+class NotFound(PathError):
+    """Missing or excluded -- deliberately one class, so the two cannot be told apart."""
+
+
 @dataclass(frozen=True)
 class Resolved:
     mount: Mount
@@ -119,8 +123,8 @@ def _locate(root: Path, segments: list[str]) -> Path:
     return current
 
 
-def not_found(display: str) -> PathError:
+def not_found(display: str) -> NotFound:
     """The not-found error, shared so a missing file and a hidden one read the same."""
-    return PathError(
+    return NotFound(
         f"{display} was not found. Use list_directory on its folder to see what's there."
     )
