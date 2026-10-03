@@ -131,3 +131,7 @@ of a non-empty folder, file and folder deletes, and a refused write into
 `.git` (not found). Each call took 80–120 ms; the first, about 300 ms. The
 audit log recorded all eleven write-tool calls with the OAuth client ID and
 no contents.
+
+Connector check, Claude desktop app, 2026-10-03: create, overwrite without a
+version (refused by the version guard), edit with the version, append, read
+back, move, and delete of a file and its folder all worked on the first try.
