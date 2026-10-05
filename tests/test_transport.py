@@ -98,8 +98,10 @@ def test_password_auth_uses_the_files_scope(config_env, tree, monkeypatch):
 
 
 async def test_health_reports_mounts_without_host_paths(tree, config):
-    body = json.loads((await server.health(MagicMock())).body)
+    response = await server.health(MagicMock())
+    body = json.loads(response.body)
 
+    assert response.status_code == 200
     assert body["status"] == "ok"
     assert body["mounts"] == [
         {"name": "council", "mode": "ro", "readable": True},
@@ -117,7 +119,9 @@ async def test_health_hides_the_home_directory(config):
     assert os.path.expanduser("~") not in body["python"]
 
 
-async def test_health_degrades_when_a_mount_is_unreadable(tree, config, monkeypatch):
+async def test_health_fails_when_a_mount_is_unreadable(tree, config, monkeypatch):
+    """The monitor only reads the status code, so this has to be a 503, with
+    the mount named in status for whoever curls it."""
     real_listdir = server.os.listdir
 
     def listdir(path):
@@ -126,11 +130,41 @@ async def test_health_degrades_when_a_mount_is_unreadable(tree, config, monkeypa
         return real_listdir(path)
 
     monkeypatch.setattr(server.os, "listdir", listdir)
-    body = json.loads((await server.health(MagicMock())).body)
+    response = await server.health(MagicMock())
+    body = json.loads(response.body)
 
-    assert body["status"] == "degraded"
+    assert response.status_code == 503
+    assert body["status"] == "mount council unreadable"
     assert body["mounts"][0]["readable"] is False
     assert body["mounts"][1]["readable"] is True
+
+
+async def test_health_fails_when_the_interpreter_moves(tree, config, monkeypatch):
+    """A uv upgrade repoints the venv's interpreter while this process keeps
+    running on the old one. Flagged now, because after the next restart the
+    server can read nothing."""
+    monkeypatch.setattr(server, "_STARTUP_PYTHON", "/elsewhere/bin/python3.12")
+    response = await server.health(MagicMock())
+
+    assert response.status_code == 503
+    assert json.loads(response.body)["status"] == (
+        "interpreter moved, re-grant Full Disk Access"
+    )
+
+
+async def test_health_lists_every_problem(tree, config, monkeypatch):
+    def listdir(path):
+        raise PermissionError(1, "Operation not permitted")
+
+    monkeypatch.setattr(server.os, "listdir", listdir)
+    monkeypatch.setattr(server, "_STARTUP_PYTHON", "/elsewhere/bin/python3.12")
+    response = await server.health(MagicMock())
+
+    assert response.status_code == 503
+    assert json.loads(response.body)["status"] == (
+        "mount council unreadable, mount other unreadable, "
+        "interpreter moved, re-grant Full Disk Access"
+    )
 
 
 async def test_health_is_cached(config, monkeypatch):

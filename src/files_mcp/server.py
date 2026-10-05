@@ -786,6 +786,13 @@ def _package_version() -> str:
         return "unknown"
 
 
+# The interpreter this process started under. ``sys.executable`` is the venv's
+# symlink, and resolving it follows uv's unversioned alias to whichever patch
+# release is installed now -- so resolving it again later shows an upgrade the
+# moment it lands, while this process is still running on the old one.
+_STARTUP_PYTHON = os.path.realpath(sys.executable)
+
+
 @mcp.custom_route("/health", methods=["GET"])
 async def health(request):
     """Unauthenticated health report, for monitoring a remote deployment.
@@ -794,23 +801,38 @@ async def health(request):
     logs within hours and gets scanned. So this reports mount names, modes and
     whether each is readable -- never a host path or a file name.
 
+    The verdict is made here, so the monitor only has to read the status code:
+    200 with ``status`` "ok", or 503 with ``status`` naming every problem found,
+    comma-separated. The other fields are there for whoever curls it next.
+
     ``python`` is the resolved interpreter, with ``~`` for the home directory.
     Full Disk Access is granted against that exact path, and a uv Python
-    upgrade silently moves it; watching this field is the early warning.
+    upgrade silently moves it. The server keeps running until its next restart,
+    then can read nothing, so the move is flagged while it can still be said.
     """
     readable = await _probe_mounts()
     mounts = [
         {"name": m.name, "mode": m.mode, "readable": readable.get(m.name, False)}
         for m in _cfg().mounts.values()
     ]
+    python = os.path.realpath(sys.executable)
+
+    # A mount that cannot be listed almost always means a privacy grant is
+    # missing or was voided: Full Disk Access, or the File Provider permission
+    # a cloud-synced folder can need on top of it.
+    problems = [f"mount {m['name']} unreadable" for m in mounts if not m["readable"]]
+    if python != _STARTUP_PYTHON:
+        problems.append("interpreter moved, re-grant Full Disk Access")
+
     return JSONResponse(
         {
-            "status": "ok" if all(m["readable"] for m in mounts) else "degraded",
+            "status": ", ".join(problems) or "ok",
             "version": _package_version(),
             "mounts": mounts,
-            "python": _tilde(os.path.realpath(sys.executable)),
+            "python": _tilde(python),
             "python_version": platform.python_version(),
-        }
+        },
+        status_code=503 if problems else 200,
     )
 
 

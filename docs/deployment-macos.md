@@ -35,8 +35,8 @@ if other uv-managed servers on the host already have Full Disk Access, this
 probably resolves to a binary that is already granted, and there is nothing to
 do. The same sharing means a uv Python upgrade moves the binary and silently
 voids the grant for every such server at once. `/health` reports the resolved
-path (with `~` for the home directory), and `scripts/healthcheck.sh` fails
-when it differs from `EXPECTED_PYTHON`.
+path (with `~` for the home directory), and returns 503 the moment it differs
+from the one the process started under.
 
 To grant it: System Settings → Privacy & Security → Full Disk Access → `+`,
 then `Cmd+Shift+G` to type the path. Clicking Allow on a popup is often not
@@ -164,28 +164,36 @@ tail -5 ~/.files-mcp/audit.log
 
 ## Monitoring
 
-`scripts/healthcheck.sh` polls `/health` and reports to a dead-man's-switch;
+`/health` makes the call itself, so any HTTP uptime monitor can watch it with no
+script on the host: point it at the public URL, e.g.
+`https://files.example.com/health`, and treat anything but a 2xx as down.
+Uptime Kuma's plain **HTTP(s)** monitor type is enough.
+
+It answers 200 with `"status": "ok"`, or 503 with `status` naming every problem
+it found, comma-separated:
+
+- **`mount <name> unreadable`**. Almost always a missing or voided privacy
+  grant: Full Disk Access, or the File Provider permission a cloud-synced
+  folder can need on top of it.
+- **`interpreter moved, re-grant Full Disk Access`**. A uv upgrade moved the
+  interpreter; the server keeps working until its next restart, then can read
+  nothing.
+
+A monitor alert only says 503; `curl` the endpoint for the reason. No response at
+all means the server is down or wedged, so give the monitor a timeout. Mounts
+are probed at most once a minute, so polling more often than that only re-reads
+the cached result.
+
+A monitor running on the same host cannot report its own host's death. Cover
+that separately, with something off the machine.
+
 `scripts/self-update.sh` pulls the tracked branch and restarts the service when
-it moves. They read `~/.files-mcp/check.env` and `~/.files-mcp/update.env`; both
-must be `chmod 600`, since a ping URL is a capability.
+it moves. It reads `~/.files-mcp/update.env`, which must be `chmod 600` if it
+holds a ping URL — that is a capability, not just an address.
 
 ```
-*/10 * * * * /Users/USERNAME/Code/files-mcp/scripts/healthcheck.sh >> /Users/USERNAME/.files-mcp/check.log 2>&1
 */15 * * * * /Users/USERNAME/Code/files-mcp/scripts/self-update.sh >> /Users/USERNAME/.files-mcp/update.log 2>&1
 ```
-
-`healthcheck.sh` reports to healthchecks.io (`PING_URL`), to an Uptime Kuma
-push monitor (`KUMA_PUSH_URL`, like `http://127.0.0.1:3001/api/push/<token>`),
-or both. For Kuma, create a **Push** monitor with a heartbeat interval a bit
-longer than the cron interval (900 seconds for a 10-minute cron). The script
-sends `status=up`, or `status=down` with the first problem as the message.
-
-Use a **distinct** check or monitor per service, so one service's pings
-cannot mask another's silence.
-
-The health check fails when the server does not answer, when any mount cannot
-be listed (almost always a missing or voided privacy grant), and when the
-interpreter has moved away from `EXPECTED_PYTHON`.
 
 ## Cutover order
 
